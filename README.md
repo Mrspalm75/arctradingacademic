@@ -1,2 +1,0 @@
-# arctradingacademic
-Arc - smart value
