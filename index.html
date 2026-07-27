@@ -21,6 +21,10 @@ import {
   LineChart as LineChartIcon,
   MessageCircle,
   Percent,
+  Activity,
+  ArrowLeftRight,
+  Repeat,
+  Layers,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -36,12 +40,21 @@ import {
 /* ------------------------------------------------------------------ */
 const ARC_TESTNET_CHAIN_ID_HEX = "0x4cef52"; // 5042002
 const ARC_TESTNET_RPC_URL = "https://rpc.testnet.arc.network";
+// Fallback RPC providers, per https://docs.arc.io/arc/references/connect-to-arc
+const ARC_TESTNET_RPC_URLS = [
+  ARC_TESTNET_RPC_URL,
+  "https://rpc.blockdaemon.testnet.arc.network",
+  "https://rpc.drpc.testnet.arc.network",
+  "https://rpc.quicknode.testnet.arc.network",
+];
 const ARC_TESTNET_EXPLORER_URL = "https://testnet.arcscan.app";
+const ARC_TESTNET_FAUCET_URL = "https://faucet.circle.com";
 
 // USDC ERC-20 interface on Arc Testnet — an optional interface over the
 // native USDC balance. Always 6 decimals. Verify against
 // https://docs.arc.io/arc/references/contract-addresses before going live.
 const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
+const USDC_EXPLORER_URL = `${ARC_TESTNET_EXPLORER_URL}/address/${USDC_ADDRESS}`;
 const USDC_DECIMALS = 6;
 
 // Standard ERC-20 function selectors (first 4 bytes of the keccak256 hash
@@ -53,7 +66,7 @@ const ARC_TESTNET_ADD_CHAIN_PARAMS = {
   chainId: ARC_TESTNET_CHAIN_ID_HEX,
   chainName: "Arc Testnet",
   nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 }, // native precision per Arc docs; the ERC-20 interface below uses 6
-  rpcUrls: [ARC_TESTNET_RPC_URL],
+  rpcUrls: ARC_TESTNET_RPC_URLS,
   blockExplorerUrls: [ARC_TESTNET_EXPLORER_URL],
 };
 
@@ -69,6 +82,17 @@ function parseUsdc(amountStr) {
   const [whole, frac = ""] = String(amountStr).split(".");
   const fracPadded = (frac + "0".repeat(USDC_DECIMALS)).slice(0, USDC_DECIMALS);
   return BigInt(whole || "0") * 10n ** BigInt(USDC_DECIMALS) + BigInt(fracPadded || "0");
+}
+
+// Formats a hex value with an arbitrary decimal count, truncated to
+// `displayDecimals` fraction digits for compact display (e.g. gas price).
+function formatUnitsGeneric(hexAmount, decimals, displayDecimals = decimals) {
+  const raw = BigInt(hexAmount);
+  const divisor = 10n ** BigInt(decimals);
+  const whole = raw / divisor;
+  const fracFull = (raw % divisor).toString().padStart(decimals, "0");
+  const frac = fracFull.slice(0, displayDecimals).replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : whole.toString();
 }
 
 function encodeAddress(addr) {
@@ -164,6 +188,19 @@ function shortenAddress(addr) {
 // wallet before going live.
 const MERCHANT_ADDRESS = "0x0000000000000000000000000000000000dEaD";
 
+// Plain JSON-RPC POST to the public Arc Testnet endpoint — no wallet
+// required, used for read-only network telemetry (block height, gas price).
+async function arcRpcCall(method, params = []) {
+  const res = await fetch(ARC_TESTNET_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || "RPC error");
+  return json.result;
+}
+
 
 /* ------------------------------------------------------------------ */
 /*  Fonts / design tokens                                              */
@@ -180,6 +217,7 @@ const FONT_IMPORT = `
 @keyframes pulseDot{ 0%,100%{opacity:.35;} 50%{opacity:1;} }
 @keyframes glowDrift{ 0%,100%{ transform: translate(-50%,-10%) scale(1); opacity:0.55;} 50%{ transform: translate(-46%,-6%) scale(1.08); opacity:0.8;} }
 @keyframes gridPan{ from{ background-position: 0 0, 0 0; } to{ background-position: 44px 44px, 44px 44px; } }
+@keyframes tickerScroll{ from{ transform: translateX(0); } to{ transform: translateX(-50%); } }
 .no-scrollbar::-webkit-scrollbar{display:none;}
 .no-scrollbar{-ms-overflow-style:none; scrollbar-width:none;}
 `;
@@ -565,6 +603,24 @@ function HowItWorks({ wallet, onConnect, onPay }) {
                     {payMsg}
                   </div>
                 )}
+                <a
+                  href={USDC_EXPLORER_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-3 font-mono text-[10px] flex items-center gap-1 underline underline-offset-2"
+                  style={{ color: C.muted }}
+                >
+                  View USDC contract on ArcScan ↗
+                </a>
+                <a
+                  href={ARC_TESTNET_FAUCET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1.5 font-mono text-[10px] flex items-center gap-1 underline underline-offset-2"
+                  style={{ color: C.gold }}
+                >
+                  Get testnet USDC (Circle Faucet) ↗
+                </a>
               </>
             )}
           </div>
@@ -615,7 +671,7 @@ function ChartAnalyzer() {
     try {
       const text = await askClaude({
         system:
-          "You are the ARC Chart Analyzer inside Arc Trading Academy, an education product. Study the uploaded chart image and return ONLY a raw JSON object (no markdown fences, no prose outside it) with these exact keys, each a concise educational explanation of 1-2 sentences: marketStructure, supportResistance, trendDirection, liquidityZones, entryIdeas, stopLoss, riskReward, psychology. Be educational, not financial advice. Base every field on what is actually visible in the image.",
+          "You are the ARC Chart Analyzer inside ATA, an education product. Study the uploaded chart image and return ONLY a raw JSON object (no markdown fences, no prose outside it) with these exact keys, each a concise educational explanation of 1-2 sentences: marketStructure, supportResistance, trendDirection, liquidityZones, entryIdeas, stopLoss, riskReward, psychology. Be educational, not financial advice. Base every field on what is actually visible in the image.",
         messages: [
           {
             role: "user",
@@ -732,7 +788,7 @@ function AIMentor() {
     try {
       const reply = await askClaude({
         system:
-          "You are the ARC Mentor inside Arc Trading Academy. Give clear, educational explanations about market structure, technical analysis, and risk management. You are teaching concepts, not giving financial advice or specific buy/sell signals — say so briefly if asked for a live call. Keep answers under 120 words, plain language, no markdown headers.",
+          "You are the ARC Mentor inside ATA. Give clear, educational explanations about market structure, technical analysis, and risk management. You are teaching concepts, not giving financial advice or specific buy/sell signals — say so briefly if asked for a live call. Keep answers under 120 words, plain language, no markdown headers.",
         messages: next,
       });
       setMessages((m) => [...m, { role: "assistant", content: reply || "Sorry, I couldn't generate a response — try again." }]);
@@ -860,7 +916,7 @@ function PracticeMode() {
     try {
       const reply = await askClaude({
         system:
-          "You are reviewing a simulated practice trade inside Arc Trading Academy. Given the described price action and the student's action, explain in under 100 words: what they did correctly, what they may have missed, and one concrete way to improve. Be encouraging but honest. No markdown headers.",
+          "You are reviewing a simulated practice trade inside ATA. Given the described price action and the student's action, explain in under 100 words: what they did correctly, what they may have missed, and one concrete way to improve. Be encouraging but honest. No markdown headers.",
         messages: [
           {
             role: "user",
@@ -1125,6 +1181,353 @@ function Scanner() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Feature: Live Chart (real TradingView embedded widget)             */
+/* ------------------------------------------------------------------ */
+function TradingViewWidget({ symbol }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.innerHTML = "";
+
+    const widgetDiv = document.createElement("div");
+    widgetDiv.className = "tradingview-widget-container__widget";
+    widgetDiv.style.height = "100%";
+    widgetDiv.style.width = "100%";
+
+    const script = document.createElement("script");
+    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+    script.type = "text/javascript";
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol,
+      interval: "60",
+      timezone: "Etc/UTC",
+      theme: "dark",
+      style: "1",
+      locale: "en",
+      backgroundColor: "#0B0E14",
+      gridColor: "rgba(35, 43, 61, 0.6)",
+      hide_top_toolbar: false,
+      hide_legend: false,
+      allow_symbol_change: true,
+      save_image: false,
+      support_host: "https://www.tradingview.com",
+    });
+
+    el.appendChild(widgetDiv);
+    el.appendChild(script);
+  }, [symbol]);
+
+  return (
+    <div
+      className="tradingview-widget-container rounded-xl border overflow-hidden"
+      style={{ borderColor: C.border, height: 480 }}
+      ref={containerRef}
+    />
+  );
+}
+
+function LiveChart() {
+  const symbols = [
+    { label: "BTC/USD", value: "BINANCE:BTCUSDT" },
+    { label: "ETH/USD", value: "BINANCE:ETHUSDT" },
+    { label: "EUR/USD", value: "OANDA:EURUSD" },
+    { label: "AAPL", value: "NASDAQ:AAPL" },
+    { label: "TSLA", value: "NASDAQ:TSLA" },
+  ];
+  const [symbol, setSymbol] = useState(symbols[0].value);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+        <div className="flex gap-2 flex-wrap">
+          {symbols.map((s) => (
+            <Pill key={s.value} active={symbol === s.value} onClick={() => setSymbol(s.value)}>
+              {s.label}
+            </Pill>
+          ))}
+        </div>
+        <span className="font-mono text-[10px] uppercase tracking-wide" style={{ color: C.muted }}>
+          Powered by TradingView
+        </span>
+      </div>
+      <TradingViewWidget symbol={symbol} />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Feature: Bridge USDC (Circle App Kit Bridge — cross-chain to Arc)  */
+/*  Real execution needs @circle-fin/bridge-kit bundled into a real    */
+/*  build (Solana/Ethereum SDKs aren't CDN-loadable in a browser like  */
+/*  ethers was), so this panel prepares the exact call and is honest   */
+/*  that submitting it needs that real build — see the bundled         */
+/*  arc-bridge.ts reference file for the working implementation.       */
+/* ------------------------------------------------------------------ */
+function BridgeUsdc() {
+  const chains = [
+    { label: "Solana Devnet", value: "Solana_Devnet", adapter: "solanaAdapter" },
+    { label: "Ethereum Sepolia", value: "Ethereum_Sepolia", adapter: "viemAdapter" },
+    { label: "Base Sepolia", value: "Base_Sepolia", adapter: "viemAdapter" },
+  ];
+  const [from, setFrom] = useState(chains[0]);
+  const [amount, setAmount] = useState("1.00");
+  const [state, setState] = useState("idle"); // idle | preparing | ready
+
+  const handlePrepare = () => {
+    setState("preparing");
+    setTimeout(() => setState("ready"), 500);
+  };
+
+  return (
+    <div className="max-w-md">
+      <p className="font-body text-[14px] leading-relaxed mb-5" style={{ color: C.muted }}>
+        Bridge USDC into Arc from another chain using Circle's App Kit SDK — it abstracts CCTP's
+        burn / attestation / mint steps into a single call.
+      </p>
+
+      <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>From chain</label>
+      <div className="flex gap-2 flex-wrap mt-2 mb-4">
+        {chains.map((c) => (
+          <Pill key={c.value} active={from.value === c.value} onClick={() => setFrom(c)}>
+            {c.label}
+          </Pill>
+        ))}
+      </div>
+
+      <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>To chain</label>
+      <div className="mt-2 mb-4">
+        <Pill active>Arc Testnet</Pill>
+      </div>
+
+      <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>Amount (USDC)</label>
+      <input
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        type="number"
+        min="0"
+        step="0.01"
+        className="w-full bg-transparent border rounded-lg px-3 py-2 mt-2 font-mono text-[13px] outline-none"
+        style={{ borderColor: C.border, color: C.text }}
+      />
+
+      <button
+        onClick={handlePrepare}
+        disabled={state === "preparing"}
+        className="mt-4 w-full font-mono text-xs tracking-wide py-3 rounded-lg border flex items-center justify-center gap-2 disabled:opacity-40"
+        style={{ borderColor: C.gold, color: C.gold }}
+      >
+        {state === "preparing" ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+        {state === "preparing" ? "Preparing…" : "Prepare bridge call"}
+      </button>
+
+      {state === "ready" && (
+        <p className="font-body text-[12px] mt-3" style={{ color: C.muted }}>
+          This is a preview — submitting a real bridge transfer needs the App Kit SDK bundled
+          into an actual build (see <span style={{ color: C.gold }}>arc-bridge.ts</span>), since
+          its chain adapters aren't loadable from a browser CDN script the way ethers was for
+          the payment flow above.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Feature: Swap (Circle App Kit SDK — USDC ⇄ EURC on Arc)            */
+/*  Same constraint as Bridge above: kit.swap() needs the real SDK      */
+/*  bundled into a build, so this prepares the exact call rather than   */
+/*  executing it here — see arc-swap.ts for the working implementation. */
+/* ------------------------------------------------------------------ */
+function SwapTokens() {
+  const tokens = ["USDC", "EURC"];
+  const [tokenIn, setTokenIn] = useState("USDC");
+  const tokenOut = tokenIn === "USDC" ? "EURC" : "USDC";
+  const [amountIn, setAmountIn] = useState("1.00");
+  const [state, setState] = useState("idle"); // idle | preparing | ready
+
+  const handlePrepare = () => {
+    setState("preparing");
+    setTimeout(() => setState("ready"), 500);
+  };
+
+  return (
+    <div className="max-w-md">
+      <p className="font-body text-[14px] leading-relaxed mb-5" style={{ color: C.muted }}>
+        Swap between USDC and EURC directly on Arc using Circle's App Kit SDK, without leaving the
+        network — useful for practicing FX-style trades in a currency you're studying.
+      </p>
+
+      <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>You pay</label>
+      <div className="flex gap-2 mt-2 mb-4">
+        {tokens.map((t) => (
+          <Pill key={t} active={tokenIn === t} onClick={() => setTokenIn(t)}>{t}</Pill>
+        ))}
+      </div>
+
+      <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>You receive</label>
+      <div className="mt-2 mb-4">
+        <Pill active>{tokenOut}</Pill>
+      </div>
+
+      <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>Amount ({tokenIn})</label>
+      <input
+        value={amountIn}
+        onChange={(e) => setAmountIn(e.target.value)}
+        type="number"
+        min="0"
+        step="0.01"
+        className="w-full bg-transparent border rounded-lg px-3 py-2 mt-2 font-mono text-[13px] outline-none"
+        style={{ borderColor: C.border, color: C.text }}
+      />
+
+      <button
+        onClick={handlePrepare}
+        disabled={state === "preparing"}
+        className="mt-4 w-full font-mono text-xs tracking-wide py-3 rounded-lg border flex items-center justify-center gap-2 disabled:opacity-40"
+        style={{ borderColor: C.gold, color: C.gold }}
+      >
+        {state === "preparing" ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+        {state === "preparing" ? "Preparing…" : `Swap ${tokenIn} → ${tokenOut}`}
+      </button>
+
+      {state === "ready" && (
+        <p className="font-body text-[12px] mt-3" style={{ color: C.muted }}>
+          This is a preview — submitting a real swap needs the App Kit SDK bundled into an actual
+          build (see <span style={{ color: C.gold }}>arc-swap.ts</span>), since its adapters aren't
+          loadable from a browser CDN script the way ethers was for the payment flow above.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Feature: Unified Balance (Circle App Kit SDK)                      */
+/*  Deposit USDC from other chains into one balance, then spend it on  */
+/*  Arc — same prepare-only constraint as Bridge/Swap above; see       */
+/*  arc-unified-balance.ts for the working implementation.             */
+/* ------------------------------------------------------------------ */
+function UnifiedBalance() {
+  const sourceChains = [
+    { label: "Base Sepolia", value: "Base_Sepolia" },
+    { label: "Arbitrum Sepolia", value: "Arbitrum_Sepolia" },
+  ];
+  const [depositChain, setDepositChain] = useState(sourceChains[0]);
+  const [depositAmount, setDepositAmount] = useState("1.00");
+  const [depositState, setDepositState] = useState("idle");
+
+  const [spendAmount, setSpendAmount] = useState("1.50");
+  const [recipient, setRecipient] = useState("");
+  const [spendState, setSpendState] = useState("idle");
+
+  const handleDeposit = () => {
+    setDepositState("preparing");
+    setTimeout(() => setDepositState("ready"), 500);
+  };
+  const handleSpend = () => {
+    setSpendState("preparing");
+    setTimeout(() => setSpendState("ready"), 500);
+  };
+
+  return (
+    <div className="grid md:grid-cols-2 gap-8">
+      <div>
+        <p className="font-body text-[14px] leading-relaxed mb-5" style={{ color: C.muted }}>
+          Deposit USDC from any supported chain into one Unified Balance, so funding your account
+          doesn't depend on already holding USDC on Arc itself.
+        </p>
+
+        <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>From chain</label>
+        <div className="flex gap-2 flex-wrap mt-2 mb-4">
+          {sourceChains.map((c) => (
+            <Pill key={c.value} active={depositChain.value === c.value} onClick={() => setDepositChain(c)}>
+              {c.label}
+            </Pill>
+          ))}
+        </div>
+
+        <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>Amount (USDC)</label>
+        <input
+          value={depositAmount}
+          onChange={(e) => setDepositAmount(e.target.value)}
+          type="number"
+          min="0"
+          step="0.01"
+          className="w-full bg-transparent border rounded-lg px-3 py-2 mt-2 font-mono text-[13px] outline-none"
+          style={{ borderColor: C.border, color: C.text }}
+        />
+
+        <button
+          onClick={handleDeposit}
+          disabled={depositState === "preparing"}
+          className="mt-4 w-full font-mono text-xs tracking-wide py-3 rounded-lg border flex items-center justify-center gap-2 disabled:opacity-40"
+          style={{ borderColor: C.gold, color: C.gold }}
+        >
+          {depositState === "preparing" ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {depositState === "preparing" ? "Preparing…" : `Deposit from ${depositChain.label}`}
+        </button>
+
+        {depositState === "ready" && (
+          <p className="font-body text-[12px] mt-3" style={{ color: C.muted }}>
+            Preview only — a real deposit needs the App Kit SDK bundled into an actual build (see{" "}
+            <span style={{ color: C.gold }}>arc-unified-balance.ts</span>).
+          </p>
+        )}
+      </div>
+
+      <div>
+        <p className="font-body text-[14px] leading-relaxed mb-5" style={{ color: C.muted }}>
+          Spend directly from the Unified Balance on Arc — no manual bridging step, funds route to
+          the recipient automatically.
+        </p>
+
+        <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>Amount (USDC)</label>
+        <input
+          value={spendAmount}
+          onChange={(e) => setSpendAmount(e.target.value)}
+          type="number"
+          min="0"
+          step="0.01"
+          className="w-full bg-transparent border rounded-lg px-3 py-2 mt-2 mb-4 font-mono text-[13px] outline-none"
+          style={{ borderColor: C.border, color: C.text }}
+        />
+
+        <label className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>Recipient address (on Arc)</label>
+        <input
+          value={recipient}
+          onChange={(e) => setRecipient(e.target.value)}
+          type="text"
+          placeholder="0x..."
+          className="w-full bg-transparent border rounded-lg px-3 py-2 mt-2 font-mono text-[13px] outline-none"
+          style={{ borderColor: C.border, color: C.text }}
+        />
+
+        <button
+          onClick={handleSpend}
+          disabled={spendState === "preparing"}
+          className="mt-4 w-full font-mono text-xs tracking-wide py-3 rounded-lg border flex items-center justify-center gap-2 disabled:opacity-40"
+          style={{ borderColor: C.gold, color: C.gold }}
+        >
+          {spendState === "preparing" ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+          {spendState === "preparing" ? "Preparing…" : "Spend on Arc"}
+        </button>
+
+        {spendState === "ready" && (
+          <p className="font-body text-[12px] mt-3" style={{ color: C.muted }}>
+            Preview only — a real spend needs the App Kit SDK bundled into an actual build (see{" "}
+            <span style={{ color: C.gold }}>arc-unified-balance.ts</span>).
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  ARC Features section wrapper (tabs)                                 */
 /* ------------------------------------------------------------------ */
 function AIFeatures() {
@@ -1135,6 +1538,10 @@ function AIFeatures() {
     { key: "practice", label: "Practice Mode", icon: Target, render: PracticeMode },
     { key: "journal", label: "Journal", icon: NotebookPen, render: Journal },
     { key: "scanner", label: "Market Scanner", icon: Radar, render: Scanner },
+    { key: "livechart", label: "Live Chart", icon: Activity, render: LiveChart },
+    { key: "bridge", label: "Bridge USDC", icon: ArrowLeftRight, render: BridgeUsdc },
+    { key: "swap", label: "Swap", icon: Repeat, render: SwapTokens },
+    { key: "unified", label: "Unified Balance", icon: Layers, render: UnifiedBalance },
   ];
   const [active, setActive] = useState("analyzer");
   const Active = tabs.find((t) => t.key === active).render;
@@ -1168,38 +1575,76 @@ function AIFeatures() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Tech stack                                                         */
+/*  Root                                                                */
 /* ------------------------------------------------------------------ */
-function TechStack() {
-  const stack = [
-    ["Frontend", "Next.js + Tailwind CSS"],
-    ["Backend", "Node.js + Express"],
-    ["Database", "PostgreSQL / Supabase"],
-    ["Auth", "WalletConnect / RainbowKit"],
-    ["Payments", "USDC on Arc Network"],
-    ["ARC", "OpenAI API"],
-    ["Charts", "TradingView Advanced Charts"],
-    ["Hosting", "Vercel"],
-    ["Storage", "Cloudinary / Supabase"],
+/* ------------------------------------------------------------------ */
+/*  Live network status ticker (real Arc Testnet telemetry)            */
+/*  Inspired by Fluxa (fluxal.vercel.app) — a scrolling strip of live   */
+/*  chain stats, adapted to ATA's own palette/type.                    */
+/* ------------------------------------------------------------------ */
+function NetworkTicker() {
+  const [blockHeight, setBlockHeight] = useState(null);
+  const [gasPrice, setGasPrice] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const [blockHex, gasHex] = await Promise.all([
+          arcRpcCall("eth_blockNumber"),
+          arcRpcCall("eth_gasPrice"),
+        ]);
+        if (cancelled) return;
+        setBlockHeight(parseInt(blockHex, 16).toLocaleString());
+        // Gas price is denominated in the native 18-decimal USDC unit.
+        setGasPrice(formatUnitsGeneric(gasHex, 18, 6));
+      } catch {
+        if (!cancelled) {
+          setBlockHeight((b) => b ?? "—");
+          setGasPrice((g) => g ?? "—");
+        }
+      }
+    };
+    poll();
+    const id = setInterval(poll, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  const items = [
+    { label: "BLOCK", value: blockHeight ?? "…" },
+    { label: "GAS (USDC)", value: gasPrice ?? "…" },
+    { label: "FINALITY", value: "< 1s" },
+    { label: "CHAIN", value: "5042002 · ARC TESTNET" },
+    { label: "GAS TOKEN", value: "USDC" },
+    { label: "EVM", value: "COMPATIBLE" },
+    { label: "STATUS", value: "● LIVE", accent: C.bull },
   ];
+
+  const row = (keyPrefix) => (
+    <div className="flex items-center shrink-0">
+      {items.map((it, i) => (
+        <span key={`${keyPrefix}-${i}`} className="flex items-center font-mono text-[11px] px-6 whitespace-nowrap">
+          <span style={{ color: C.muted }}>{it.label}</span>
+          <span className="ml-2" style={{ color: it.accent || C.text }}>{it.value}</span>
+          <span className="ml-6" style={{ color: C.border }}>|</span>
+        </span>
+      ))}
+    </div>
+  );
+
   return (
-    <section className="px-6 md:px-12 py-24 border-t" style={{ borderColor: C.border }}>
-      <SectionTitle eyebrow="Under the hood" title="Built for a production Web3 education product" />
-      <div className="grid sm:grid-cols-3 md:grid-cols-3 gap-3">
-        {stack.map(([label, val]) => (
-          <div key={label} className="rounded-xl border p-4 flex items-center justify-between" style={{ borderColor: C.border, background: C.surface }}>
-            <span className="font-mono text-[11px] uppercase tracking-wide" style={{ color: C.muted }}>{label}</span>
-            <span className="font-body text-[13px] text-right" style={{ color: C.text }}>{val}</span>
-          </div>
-        ))}
+    <div className="border-b overflow-hidden" style={{ borderColor: C.border, background: C.surface }}>
+      <div className="flex" style={{ animation: "tickerScroll 32s linear infinite" }}>
+        {row("a")}
+        {row("b")}
       </div>
-    </section>
+    </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Root                                                                */
-/* ------------------------------------------------------------------ */
 export default function App() {
   const [modal, setModal] = useState({ open: false, title: "", body: "" });
   const openDemo = (title, body) => setModal({ open: true, title, body });
@@ -1272,7 +1717,7 @@ export default function App() {
         <div className="px-6 md:px-12 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ScanLine size={16} style={{ color: C.gold }} />
-            <span className="font-display text-sm font-semibold tracking-wide">Arc Trading Academy</span>
+            <span className="font-display text-base font-bold tracking-wide">ATA</span>
             <span className="hidden sm:inline font-mono text-[10px] tracking-wide ml-1" style={{ color: C.muted }}>
               arctradingacademy.com
             </span>
@@ -1297,6 +1742,8 @@ export default function App() {
         </div>
       </header>
 
+      <NetworkTicker />
+
       {/* Hero */}
       <section className="px-6 md:px-12 pt-16 pb-24 grid md:grid-cols-2 gap-12 items-center">
         <div>
@@ -1305,7 +1752,7 @@ export default function App() {
             Learn to read charts like a professional — with ARC.
           </h1>
           <p className="font-body mt-6 text-[15px] leading-relaxed max-w-md" style={{ color: C.muted }}>
-            Arc Trading Academy combines artificial intelligence, real-time market analysis, and interactive
+            <strong className="font-bold" style={{ color: C.text }}>ATA</strong> combines artificial intelligence, real-time market analysis, and interactive
             lessons to help traders understand price action, market structure, and risk management. Improve
             your skills — not just your signals.
           </p>
@@ -1337,13 +1784,11 @@ export default function App() {
 
       <HowItWorks wallet={wallet} onConnect={handleConnect} onPay={handlePay} />
       <AIFeatures />
-      <TechStack />
 
       <footer className="px-6 md:px-12 py-10 border-t flex flex-col md:flex-row items-center justify-between gap-4" style={{ borderColor: C.border }}>
-        <span className="font-mono text-[11px]" style={{ color: C.muted }}>© {new Date().getFullYear()} Arc Trading Academy · arctradingacademy.com — education only, not financial advice.</span>
+        <span className="font-mono text-[11px]" style={{ color: C.muted }}>© {new Date().getFullYear()} <strong className="font-bold" style={{ color: C.text }}>ATA</strong> · arctradingacademy.com</span>
         <div className="flex items-center gap-2">
           <ScanLine size={13} style={{ color: C.gold }} />
-          <span className="font-display text-xs" style={{ color: C.muted }}>Built to teach, not to tip.</span>
         </div>
       </footer>
 
